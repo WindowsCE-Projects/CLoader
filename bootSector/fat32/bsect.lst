@@ -1,0 +1,554 @@
+Microsoft (R) Macro Assembler Version 6.11		    06/13/16 20:28:55
+bsect.asm						     Page 1 - 1
+
+
+				;
+				; Copyright (c) Microsoft Corporation.  All rights reserved.
+				;
+				;
+				; Use of this sample source code is subject to the terms of the Microsoft
+				; license agreement under which you licensed this sample source code. If
+				; you did not accept the terms of the license agreement, you are not
+				; authorized to use this sample source code. For the terms of the license,
+				; please see the license agreement between you and Microsoft or, if applicable,
+				; see the LICENSE.RTF on your install media or the root of your tools installation.
+				; THE SAMPLE SOURCE CODE IS PROVIDED "AS IS", WITH NO WARRANTIES OR INDEMNITIES.
+				;
+				;
+				;-------------------------------------------------------------------------------
+
+				        .model tiny
+ 0000				        .code
+				        .stack
+				        .startup
+				        .386
+
+ = 1000				LOAD_ADDRESS    EQU     1000h       ; Boot loader load address
+ = 0044				READ_LENGTH     EQU     68          ; Size of boot loader image in sectors
+
+				;-------------------------------------------------------------------------------
+
+				OpPrefix MACRO
+				        db      66h
+				        ENDM
+
+				AddrPrefix MACRO
+				        db      67h
+				        ENDM
+
+				;-------------------------------------------------------------------------------
+				;
+				; Even though we declare 0xFA00 as a starting address, the BIOS will
+				; load us at 0x7C00. But just at the beginning of our code, we'll
+				; copy ourselves to 0xFA00 and jump in the right place.
+				;
+				; This file contains the boot sector code for the Windows CE BIOS Boot Loader.
+				; A quick overview of the boot process:
+				;
+				; * At power-on, the BIOS performs POST.
+				; * The BIOS seeks out the boot disk and on a fixed disk, loads the first
+				;   sector(the master boot record - MBR) and jumps to it (the MBR contains
+				;   code and data). Note that for a floppy, the first sector on the disk is
+				;   the boot sector (no MBR).
+				; * The MBR code, amongst other things, locates the active boot partition
+				;   and loads the boot sector code (this code).
+				; * The boot sector code is the first filesystem-specific bit of code and
+				;   it's job is to locate, load, and bootstrap the OS (or in our case,
+				;   the boot loader).
+				;
+				;
+				        org     0FA00h
+
+ FA00  EB 58			        jmp     Start
+ FA02  90			        nop
+
+				; BIOS parameter block (BPB)
+				;
+				; This structure is filled when volume is formated for FAT file system.
+				; There is multiple BPB formats (one for FAT12 and FAT16, second for FAT32
+				; and another for exFat). This is also reason why we have different boot
+				; sector code for each FAT flavor.
+				;
+				;
+				;                                               Offset  Size
+				;                                           0   3
+ FA03 57 49 4E 44 4F 57		VerId           db  'WINDOWCE'          ; 7C03  3       8
+       43 45
+ FA0B 0000			BytePerSect     dw  0000                ; 7C0B  11      2
+ FA0D 00			SectPerClust    db  00                  ; 7C0D  13      1
+ FA0E 0000			RsvdSects       dw  0000                ; 7C0E  14      2
+ FA10 00			NumFATs         db  00                  ; 7C10  16      1
+ FA11 0000			Num32bEntry     dw  0000                ; 7C11  17      2
+ FA13 0000			SectPerPart     dw  0000                ; 7C13  19      2
+ FA15 00			MediaDesc       db  00                  ; 7C15  21      1
+ FA16 0000			SectPerFAT      dw  0000                ; 7C16  22      2
+ FA18 0000			SectPerTrack    dw  0000                ; 7C18  24      2
+ FA1A 0000			NumHeads        dw  0000                ; 7C1A  26      2
+ FA1C 0000			NumHiddenSectL  dw  0000                ; 7C1C  28      4
+ FA1E 0000			NumHiddenSectH  dw  0000                ; 7C1E
+ FA20 0000			TotalSectorsL   dw  0000                ; 7C20  32      4
+ FA22 0000			TotalSectorsH   dw  0000                ; 7C22
+ FA24 0000			SectPerFATL     dw  0000                ; 7C24  36      4
+ FA26 0000			SectPerFATH     dw  0000                ; 7C26
+ FA28 0000			FAT32Flags      dw  0000                ; 7C28  40      2
+ FA2A 0000			FSVersion       dw  0000                ; 7C2A  42      2
+ FA2C 0000			FirstClusterL   dw  0000                ; 7C2C  44      4
+ FA2E 0000			FirstClusterH   dw  0000                ; 7C2E
+ FA30 0000			FSInfo          dw  0000                ; 7C30  48      2
+ FA32 0000			BackupBootSect  dw  0000                ; 7C32  50      2
+ FA34 20 20 20 20 20 20		Reserved        db  '            '      ; 7C34  52      12
+       20 20 20 20 20 20
+ FA40 00			DriveId         db  00                  ; 7C40  64      1
+ FA41 00			Reserved1       db  00                  ; 7C41  65      1
+ FA42 00			ExtRecordSig    db  00                  ; 7C42  66      1
+ FA43 0000			VolSerNumL      dw  0000                ; 7C43  67      4
+ FA45 0000			VolSerNumH      dw  0000                ; 7C45
+ FA47 20 20 20 20 20 20		VolLabel        db  '           '       ; 7C47  71      11
+       20 20 20 20 20
+ FA52 20 20 20 20 20 20		TypeFAT         db  '        '          ; 7C52  82      8
+       20 20
+				; Diskette Parameter Table              ; 7C5A  90      11
+				; Int13Ext      db  00                  ; 7C65  101     1
+				; DataSectL     dw  0000                ; 7C66  102     2
+				; DataSectH     dw  0000                ; 7C68  104     2
+				;                                       ; 7C6A  106
+
+				;-------------------------------------------------------------------------------
+				;
+				; Start of boot sector code
+				;
+ FA5A				Start:
+
+ FA5A  33 C9			        xor     cx, cx
+ FA5C  8E D1			        mov     ss, cx                      ; Zero stack segment
+ FA5E  BC FA00			        mov     sp, 0FA00h                  ; Stack Pointer to 0xFA00
+ FA61  8E C1			        mov     es, cx                      ; Zero extra segment
+ FA63  8E D9			        mov     ds, cx                      ; Zero data segment
+
+ FA65  8B EC			        mov     bp, sp                      ; Set base register to 0xFA00
+
+ FA67  BE 7C00			        mov     si, 7C00h                   ; Copy code from 0x7C00 to 0xFA00
+ FA6A  8B FC			        mov     di, sp
+ FA6C  B9 0200			        mov     cx, 0200h
+ FA6F  FC			        cld
+ FA70  F3/ A4			        repz    movsb
+
+ FA72  E9			        db      00E9H                       ; Make a relative jump
+ FA73  7E00			        dw      (0FA00h - 7C00h)
+				;Running at FA00h 
+ FA75  88 4E 65			        mov     [bp + 101], cl              ; Clear Int13Ext flag
+
+						;(db) The BIOS is trashing the Sec/FAT low val. It's in the
+				        ;same place as the Disk number for FAT16 and the BIOS is trying
+				        ;to 'help' us. See if a backup copy is available.
+ FA78  0A 8E 01FD		        or		cl,[bp + 509]				; Saved byte right before 55AA sig
+ FA7C  74 03			        jz		skip_spf_update				; CL was already 0
+ FA7E  88 4E 24					mov		[bp + 36], cl
+ FA81				skip_spf_update:       
+
+				;We don't have room for this in the debug version        
+				IFNDEF DEBUG
+				ENDIF
+ FA81  8A 56 40			        mov     dl, [bp + 64]               ; DriveId
+ FA84  80 FA 80			        cmp     dl, 80h
+ FA87  72 23			        jb      NoFixedDisk
+				;We don't have room for this in the debug version        
+				IFNDEF DEBUG
+				ENDIF
+ FA89				NoInt13Ext:
+ FA89  8A 56 40			        mov     dl, [bp + 64]               ; DriveId
+ FA8C  B4 08			        mov     ah, 08h						; Get Drive Parameters
+ FA8E  CD 13			        int     13h
+ FA90  0F 82 0087		        jc      DiskError
+				IFDEF DEBUG        
+						; Tell user the drive parameters read first tracks/cyl+last cyl
+ FA94  8B C1			        mov		ax,cx
+ FA96  E8 0113			        call	PrintAX
+						; Now tell num Heads (DH) and max drives (DL)
+ FA99  8B C2			        mov		ax,dx
+ FA9B  E8 010E			        call	PrintAX
+				ENDIF        
+ FA9E  86 F2			        xchg    dh, dl
+ FAA0  32 F6			        xor     dh, dh
+ FAA2  42			        inc     dx
+ FAA3  89 56 1A			        mov     [bp + 26], dx               ; NumHeads
+ FAA6  83 E1 3F			        and     cx, 003Fh
+ FAA9  89 4E 18			        mov     [bp + 24], cx               ; SectPerTrack
+
+ FAAC				NoFixedDisk:
+ FAAC  32 E4			        xor     ah, ah
+ FAAE  8A 46 10			        mov     al, [bp + 16]               ; NumFATs
+ FAB1  F7 66 24			        mul     word ptr [bp + 36]          ; SectPerFATL
+ FAB4  8B D8			        mov     bx, ax
+				IFDEF DEBUG        
+ FAB6  E8 00F3			call	PrintAX
+				ENDIF
+ FAB9  8B CA			        mov     cx, dx
+ FABB  8A 46 10			        mov     al, [bp + 16]               ; NumFATs
+ FABE  F7 66 26			        mul     word ptr [bp + 38]          ; SectPerFATH
+				;       cmp     dx, 0
+				;       jnz     DiskError
+ FAC1  03 C8			        add     cx, ax
+ FAC3  8B C3			        mov     ax, bx
+ FAC5  8B D1			        mov     dx, cx
+ FAC7  03 46 1C			        add     ax, [bp + 28]               ; NumHiddenSectL
+ FACA  13 56 1E			        adc     dx, [bp + 30]               ; NumHiddenSectH
+ FACD  03 46 0E			        add     ax, [bp + 14]               ; RsvdSects
+ FAD0  83 D2 00			        adc     dx, 0
+ FAD3  89 46 66			        mov     [bp + 102], ax              ; DataSectL
+ FAD6  89 56 68			        mov     [bp + 104], dx              ; DataSectL
+				        ; Tell user our base data sector
+				IFDEF DEBUG        
+ FAD9  E8 00D0					call	PrintAX
+				ENDIF
+ FADC  8B 46 2C			        mov     ax, [bp + 44]               ; FirstClusterL
+ FADF  48			        dec     ax
+ FAE0  48			        dec     ax
+ FAE1  F6 66 0D			        mul     byte ptr [bp + 13]          ; SectPerClust
+ FAE4  03 46 66			        add     ax, [bp + 102]              ; DataSectL
+ FAE7  13 56 68			        adc     dx, [bp + 104]              ; DataSectL
+
+ FAEA  BB 0500			        mov     bx, 0500h                   ; Sector Buffer
+ FAED  B9 0001			        mov     cx, 1
+ FAF0  E8 0070			        call    ReadSectors
+ FAF3  72 26			        jc      DiskError
+
+ FAF5  BB 0500			        mov     bx, 0500h                   ; Sector Buffer
+ FAF8  8B 46 0B			        mov     ax, [bp + 11]               ; BytePerSect
+ FAFB  B1 05			        mov     cl, 05h
+ FAFD  D3 E8			        shr     ax, cl
+ FAFF  8B C8			        mov     cx, ax                      ; Number of entries in sector
+
+ FB01				FindEntry:
+ FB01  51			        push    cx
+ FB02  8B FB			        mov     di, bx
+				IFDEF DEBUG        
+				        ; Tell user the first 2 chars of each name checked.
+ FB04  50			        push	ax
+ FB05  8B 05			        mov		ax, [di]
+ FB07  E8 00A2			        call	PrintAX
+ FB0A  58			        pop		ax
+				ENDIF        
+ FB0B  B9 000B			        mov     cx, 000Bh
+ FB0E  BE FBDD R		        mov     si, offset ImageName
+ FB11  F3/ A6			        repz    cmpsb
+ FB13  74 1A			        jz      FoundFiles                  ; Found it?
+ FB15  83 C3 20			        add     bx, 0020h                   ; Move to the next entry
+ FB18  59			        pop     cx
+ FB19  E2 E6			        loop    FindEntry
+
+				        ; A disk error has occurred - usually this is because
+				        ; we couldn't find the boot loader file on the disk.
+				        ;
+ FB1B				DiskError:
+ FB1B  BE FBE8 R		        mov     si, offset ErrorMsg
+ FB1E  E8 0033			        call    PrintMessage
+ FB21  33 C0			        xor     ax, ax
+ FB23  CD 16			        int     16h
+ FB25  5D			        pop     bp                          ; Restore diskette parameter table
+ FB26  1F			        pop     ds
+ FB27  8F 46 00			        pop     [bp]
+ FB2A  8F 46 02			        pop     [bp + 2]
+ FB2D  CD 19			        int     19h
+
+				;
+				; We found our bootloader on the disk - now we need to load it.
+				; There are a couple of important things here:
+				;
+				; * The boot loader image must be in a contiguous grouping of sectors
+				;   on the disk.  This is because the bootloader doesn't contain
+				;   code to load the rest of itself, like DOS's IO.SYS does.
+				;   This requirement imposes a retriction which must be addressed
+				;   by the utility that writes the bootloader image to disk.
+				;   On a newly-formatted disk, empty disk, the main problem would
+				;   come from bad disk sectors.
+				;
+				; * The boot sector loads the bootloader at a predetermined address
+				;   (0x1000h). This location is compatible with the XLDR configuration
+				;   in xldr.bib.  As well, it allows for the BIOS interrupt vector
+				;   table to remain unaffected.
+				;
+				; * When the XLDR image is loaded, the boot sector code loads
+				;   a predetermined number of sectors from the storage device.
+				;   The number of sectors to be loaded must be set at build time
+				;   and if the XLDR image size changes, this number will need to be
+				;   updated (READ_LENGTH above).
+
+ FB2F				FoundFiles:
+ FB2F  8B 47 1A			        mov     ax, [bx + 1Ah]              ; Cluster
+ FB32  48			        dec     ax
+ FB33  48			        dec     ax
+ FB34  8A 5E 0D			        mov     bl, [bp + 13]               ; SectPerClust
+ FB37  32 FF			        xor     bh, bh
+ FB39  F7 E3			        mul     bx
+ FB3B  03 46 66			        add     ax, [bp + 102]              ; DataSectL
+ FB3E  13 56 68			        adc     dx, [bp + 104]              ; DataSectL
+				IFDEF DEBUG
+						;Tell User the sector that WCELDR was found.
+ FB41  E8 0068					call	PrintAX        
+				ENDIF		
+ FB44  BB 1000			        mov     bx, LOAD_ADDRESS            ; Load to 0000:1000
+ FB47  B9 0044			        mov     cx, READ_LENGTH             ; This number of sectors
+ FB4A  E8 0016			        call    ReadSectors
+ FB4D  72 CC			        JB      DiskError
+
+				        ; Jump to the bootloader image.
+ FB4F  EA			        DB      00EAh
+ FB50  1000			        DW      LOAD_ADDRESS
+ FB52  0000			        DW      0000h
+
+				        ;
+				        ; Display a text message using the BIOS INT 10h call.
+				        ;
+ FB54				PrintMessage:
+ FB54  AC			        lodsb
+ FB55  0A C0			        or      al, al
+ FB57  74 09			        jz      Return
+ FB59  B4 0E			        mov     ah, 0Eh
+ FB5B  BB 0007			        mov     bx, 0007h
+ FB5E  CD 10			        int     10h
+ FB60  EB F2			        jmp     PrintMessage
+
+ FB62				Return:
+ FB62  C3			        RET
+
+				;-------------------------------------------------------------------------------
+				;
+				; Read disk sector(s).
+				;
+				;   Inputs:  DX:AX == logical sector #
+				;            CL == # sectors (CH == 0)
+				;            ES:BX == transfer address
+				;            BP == boot sector code
+				;
+				;   Outputs: DX:AX next logical sector #
+				;            CX == 0 (assuming no errors)
+				;            ES:BX -> byte after last byte of read
+				;            Carry set if error, else clear if success
+				;
+				;   Preserves: BP, SI, DI
+				;
+ FB63				ReadSectors:
+ FB63  60			        pusha                           ; save all registers
+
+				        OpPrefix                        ; push packet on stack
+ FB64  66		     1	        db      66h
+ FB65  6A 00			        push    0
+ FB67  52			        push    dx
+ FB68  50			        push    ax                      ; block number
+ FB69  06			        push    es
+ FB6A  53			        push    bx                      ; transfer address
+ FB6B  6A 01			        push    1                       ; count of one, because we're looping
+ FB6D  6A 10			        push    16                      ; packet size
+
+ FB6F  91			        xchg    ax, cx                  ; AX <-> CX
+
+ FB70  8B 46 18			        mov     ax, [bp + 24]           ; Sectors per track
+ FB73  96			        xchg    ax, si                  ; save for divides
+
+ FB74  92			        xchg    ax, dx                  ; DX -> AX
+ FB75  33 D2			        xor     dx, dx                  ; divide 0:AX
+ FB77  F7 F6			        div     si                      ; AX = high word of track
+
+ FB79  91			        xchg    ax, cx                  ; save AX in CX and restore old AX
+ FB7A  F7 F6			        div     si                      ; CX:AX = track, DX = sector
+
+ FB7C  42			        inc     dx                      ; sector is 1-based
+ FB7D  87 CA			        xchg    cx, dx                  ; CX = sector, DX = high word of track
+ FB7F  F7 76 1A			        div     word ptr [bp + 26]      ; heads -> AX = cylinder, DX = head
+
+ FB82  8A F2			        mov     dh, dl                  ; head # < 255
+
+ FB84  8A E8			        mov     ch, al                  ; CH = cyl #
+ FB86  C0 CC 02			        ror     ah, 2                   ; move bits 8,9 of AX to bits 14,15
+				                                        ; (the rest has to be zero, since
+				                                        ;  cyls cannot be more than 10 bits)
+ FB89  0A CC			        or      cl, ah                  ; CL = sector # plus high bits of cyl #
+ FB8B  B8 0201			        mov     ax, 0201h               ; disk read 1 sector
+
+ FB8E  80 7E 49 00		        cmp     byte ptr [bp + 73], 0    ; should standard call be used?
+ FB92  74 04			        je      DoIo                    ; use standard calls
+ FB94  B4 42			        mov     ah, 42h                 ; x13, we're ready to rock
+ FB96  8B F4			        mov     si,sp                   ; DS:SI -> X13 packet
+
+ FB98				DoIo:
+ FB98  8A 56 40			        mov     dl, [bp + 64]           ; DL == drive #
+ FB9B  CD 13			        int     13h
+
+ FB9D  61			        popa                            ; throw away packet on stack (8 words)
+ FB9E  61			        popa                            ; get real registers back
+ FB9F  72 0A			        jc      DoReadExit              ; disk error
+
+ FBA1  40			        inc     ax
+ FBA2  75 01			        jnz     DoReadNext
+ FBA4  42			        inc     dx
+
+ FBA5				DoReadNext:                             ; Adjust buffer address
+ FBA5  03 5E 0B			        add     bx, [bp + 11]           ; BytesPerSector
+ FBA8  49			        dec     cx
+ FBA9  75 B8			        jnz     ReadSectors
+
+ FBAB				DoReadExit:
+ FBAB  C3			        ret
+
+				;PrtChk:
+				;		pusha
+				;		mov		ax, [bp + 78]
+				;		mov		si, offset ChkPtr
+				;		mov		[si],al
+				;		call	PrintMessage
+				;		popa
+				;		ret
+
+				IFDEF DEBUG
+ FBAC				PrintAX:
+ FBAC  60					pusha
+ FBAD  33 DB					XOR      BX, BX
+ FBAF  B1 04					MOV      CL, 4
+ FBB1				StartPrinting:
+ FBB1  50				    PUSH     AX
+ FBB2  83 FB 01				    CMP      BX, 1
+ FBB5  7F 02				    JG       DoneExchange
+ FBB7  8A C4				    MOV      AL, AH
+ FBB9				DoneExchange:
+ FBB9  F6 C3 01				    TEST     Bl, 1
+ FBBC  75 02				    JNE      ConvertNumber
+ FBBE  D2 E8				    SHR      AL, CL
+ FBC0				ConvertNumber:
+ FBC0  24 0F					AND      AL, 0FH
+ FBC2  04 30					ADD      AL, 030H
+ FBC4  3C 3A					CMP      AL, 03AH
+ FBC6  72 02					JB       PrintNum
+ FBC8  04 07					ADD      AL, 07H
+ FBCA				PrintNum:
+ FBCA  B4 0E					MOV      AH, 0EH
+ FBCC  CD 10					INT      10H
+ FBCE  58					POP      AX
+ FBCF  43					INC      BX
+ FBD0  83 FB 04					CMP      BX, 4
+ FBD3  72 DC					JB       StartPrinting
+ FBD5  BE FBFA R			    mov     si, offset NewLine
+ FBD8  E8 FF79			        call    PrintMessage
+ FBDB  61			        popa
+ FBDC  C3					ret
+				ENDIF 
+				;-------------------------------------------------------------------------------
+
+ FBDD 57 43 45 4C 44 52		ImageName   db  'WCELDR     '
+       20 20 20 20 20
+				IFNDEF DEBUG
+				ELSE
+ FBE8 0D 0A 42 61 64 20		ErrorMsg    db  0Dh, 0Ah, 'Bad CE boot Disk' 
+       43 45 20 62 6F 6F
+       74 20 44 69 73 6B
+				ENDIF
+ FBFA				NewLine:
+ FBFA  0D 0A 00						db	0Dh, 0Ah, 0
+					
+ FBFD 00			BackupSecFATlb	db	0				;Saved copy of BPB[0x24]
+ FBFE 55 AA			Signature   db  55H, 0AAH
+
+				;-------------------------------------------------------------------------------
+
+				        .exit
+
+				        END
+
+Microsoft (R) Macro Assembler Version 6.11		    06/13/16 20:28:55
+bsect.asm						     Symbols 2 - 1
+
+
+
+
+Macros:
+
+                N a m e                 Type
+
+AddrPrefix . . . . . . . . . . .	Proc
+OpPrefix . . . . . . . . . . . .	Proc
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+DGROUP . . . . . . . . . . . . .	GROUP
+_TEXT  . . . . . . . . . . . . .	16 Bit	 FC04	  Word	  Public  'CODE'	
+_DATA  . . . . . . . . . . . . .	16 Bit	 0000	  Word	  Public  'DATA'	
+STACK  . . . . . . . . . . . . .	16 Bit	 0400	  Para	  Stack	  'STACK'	 
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 0000h	 
+@DataSize  . . . . . . . . . . .	Number	 0000h	 
+@Interface . . . . . . . . . . .	Number	 0000h	 
+@Model . . . . . . . . . . . . .	Number	 0001h	 
+@Startup . . . . . . . . . . . .	L Near	 0100	  _TEXT	
+@code  . . . . . . . . . . . . .	Text   	 DGROUP
+@data  . . . . . . . . . . . . .	Text   	 DGROUP
+@fardata?  . . . . . . . . . . .	Text   	 FAR_BSS
+@fardata . . . . . . . . . . . .	Text   	 FAR_DATA
+@stack . . . . . . . . . . . . .	Text   	 DGROUP
+BackupBootSect . . . . . . . . .	Word	 FA32	  _TEXT	
+BackupSecFATlb . . . . . . . . .	Byte	 FBFD	  _TEXT	
+BytePerSect  . . . . . . . . . .	Word	 FA0B	  _TEXT	
+ConvertNumber  . . . . . . . . .	L Near	 FBC0	  _TEXT	
+DEBUG  . . . . . . . . . . . . .	Text   	 1
+DiskError  . . . . . . . . . . .	L Near	 FB1B	  _TEXT	
+DoIo . . . . . . . . . . . . . .	L Near	 FB98	  _TEXT	
+DoReadExit . . . . . . . . . . .	L Near	 FBAB	  _TEXT	
+DoReadNext . . . . . . . . . . .	L Near	 FBA5	  _TEXT	
+DoneExchange . . . . . . . . . .	L Near	 FBB9	  _TEXT	
+DriveId  . . . . . . . . . . . .	Byte	 FA40	  _TEXT	
+ErrorMsg . . . . . . . . . . . .	Byte	 FBE8	  _TEXT	
+ExtRecordSig . . . . . . . . . .	Byte	 FA42	  _TEXT	
+FAT32Flags . . . . . . . . . . .	Word	 FA28	  _TEXT	
+FSInfo . . . . . . . . . . . . .	Word	 FA30	  _TEXT	
+FSVersion  . . . . . . . . . . .	Word	 FA2A	  _TEXT	
+FindEntry  . . . . . . . . . . .	L Near	 FB01	  _TEXT	
+FirstClusterH  . . . . . . . . .	Word	 FA2E	  _TEXT	
+FirstClusterL  . . . . . . . . .	Word	 FA2C	  _TEXT	
+FoundFiles . . . . . . . . . . .	L Near	 FB2F	  _TEXT	
+ImageName  . . . . . . . . . . .	Byte	 FBDD	  _TEXT	
+LOAD_ADDRESS . . . . . . . . . .	Number	 1000h	 
+MediaDesc  . . . . . . . . . . .	Byte	 FA15	  _TEXT	
+NewLine  . . . . . . . . . . . .	L Near	 FBFA	  _TEXT	
+NoFixedDisk  . . . . . . . . . .	L Near	 FAAC	  _TEXT	
+NoInt13Ext . . . . . . . . . . .	L Near	 FA89	  _TEXT	
+Num32bEntry  . . . . . . . . . .	Word	 FA11	  _TEXT	
+NumFATs  . . . . . . . . . . . .	Byte	 FA10	  _TEXT	
+NumHeads . . . . . . . . . . . .	Word	 FA1A	  _TEXT	
+NumHiddenSectH . . . . . . . . .	Word	 FA1E	  _TEXT	
+NumHiddenSectL . . . . . . . . .	Word	 FA1C	  _TEXT	
+PrintAX  . . . . . . . . . . . .	L Near	 FBAC	  _TEXT	
+PrintMessage . . . . . . . . . .	L Near	 FB54	  _TEXT	
+PrintNum . . . . . . . . . . . .	L Near	 FBCA	  _TEXT	
+READ_LENGTH  . . . . . . . . . .	Number	 0044h	 
+ReadSectors  . . . . . . . . . .	L Near	 FB63	  _TEXT	
+Reserved1  . . . . . . . . . . .	Byte	 FA41	  _TEXT	
+Reserved . . . . . . . . . . . .	Byte	 FA34	  _TEXT	
+Return . . . . . . . . . . . . .	L Near	 FB62	  _TEXT	
+RsvdSects  . . . . . . . . . . .	Word	 FA0E	  _TEXT	
+SectPerClust . . . . . . . . . .	Byte	 FA0D	  _TEXT	
+SectPerFATH  . . . . . . . . . .	Word	 FA26	  _TEXT	
+SectPerFATL  . . . . . . . . . .	Word	 FA24	  _TEXT	
+SectPerFAT . . . . . . . . . . .	Word	 FA16	  _TEXT	
+SectPerPart  . . . . . . . . . .	Word	 FA13	  _TEXT	
+SectPerTrack . . . . . . . . . .	Word	 FA18	  _TEXT	
+Signature  . . . . . . . . . . .	Byte	 FBFE	  _TEXT	
+StartPrinting  . . . . . . . . .	L Near	 FBB1	  _TEXT	
+Start  . . . . . . . . . . . . .	L Near	 FA5A	  _TEXT	
+TotalSectorsH  . . . . . . . . .	Word	 FA22	  _TEXT	
+TotalSectorsL  . . . . . . . . .	Word	 FA20	  _TEXT	
+TypeFAT  . . . . . . . . . . . .	Byte	 FA52	  _TEXT	
+VerId  . . . . . . . . . . . . .	Byte	 FA03	  _TEXT	
+VolLabel . . . . . . . . . . . .	Byte	 FA47	  _TEXT	
+VolSerNumH . . . . . . . . . . .	Word	 FA45	  _TEXT	
+VolSerNumL . . . . . . . . . . .	Word	 FA43	  _TEXT	
+skip_spf_update  . . . . . . . .	L Near	 FA81	  _TEXT	
+
+	   0 Warnings
+	   0 Errors
